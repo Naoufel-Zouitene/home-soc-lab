@@ -154,10 +154,4 @@ firewall with the service running, and still nothing is actually listening.
 
 ---
 
-## Roadmap
 
-- [x] SSH brute-force against the Ubuntu server (Scenario 2)
-- [x] Active Response: block the attacker IP automatically (Scenario 2)
-- [ ] Account lockout (Event ID 4740)
-- [ ] Custom Wazuh rule for RDP brute-force
-- [ ] Python script to enrich alerts (IP reputation via AbuseIPDB)
