@@ -1,4 +1,3 @@
-[README-2.md](https://github.com/user-attachments/files/34290686/README-2.md)
 # Home SOC Lab – Wazuh, Sysmon & Attack Detection
 
 A small Security Operations Center built on a laptop to practice the SOC analyst workflow:
@@ -151,4 +150,14 @@ This closes the loop: **detect → respond**. The lab now blocks an attacker aut
 | Wazuh rejected the new password | Allowed symbols are limited to `.*+?-` | Compliant password |
 
 **Main lesson:** service, firewall and listener are three separate layers. A port can be allowed in the
-firewall with the service running, and still nothing is actually listening
+firewall with the service running, and still nothing is actually listening.
+
+---
+
+## Roadmap
+
+- [x] SSH brute-force against the Ubuntu server (Scenario 2)
+- [x] Active Response: block the attacker IP automatically (Scenario 2)
+- [ ] Account lockout (Event ID 4740)
+- [ ] Custom Wazuh rule for RDP brute-force
+- [ ] Python script to enrich alerts (IP reputation via AbuseIPDB)
