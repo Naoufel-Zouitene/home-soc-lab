@@ -1,3 +1,4 @@
+[README-2.md](https://github.com/user-attachments/files/34290686/README-2.md)
 # Home SOC Lab – Wazuh, Sysmon & Attack Detection
 
 A small Security Operations Center built on a laptop to practice the SOC analyst workflow:
@@ -62,8 +63,6 @@ Host: MacBook Air M5 (16 GB), VMware Fusion.
    ```
 6. **Snapshots** taken at every stable step, so any mistake can be rolled back in seconds.
 
-![Wazuh dashboard with active agent](screenshots/01-agent-active.png)
-
 ---
 
 ## Scenario 1 – RDP brute-force detection
@@ -96,9 +95,49 @@ done < passwords.txt
 | Correlation rule | 60204, level 10 – the pattern is the signal |
 | MITRE ATT&CK | T1110 Brute Force |
 
-![Correlation alert 60204 in Threat Hunting](screenshots/02-alert-60204.png)
+The key SOC point: a single failure is noise; it's the **repetition from one source** that makes an actionable alert.
 
-![nmap before and after enabling RDP](screenshots/03-nmap.png)
+---
+
+## Scenario 2 – SSH brute-force with automatic response (Active Response)
+
+Same detection logic as Scenario 1, but this time the target is the **Linux server itself** (SSH, port 22),
+and Wazuh does not just detect — it **blocks the attacker automatically**.
+
+| Step | Action | Result |
+| --- | --- | --- |
+| 1. Arm defense | Add an Active Response block to the manager's `ossec.conf` (`firewall-drop` on rule `5763`, 180s) | Wazuh will auto-ban any SSH brute-force source |
+| 2. Recon | `nmap 172.16.207.10` from Kali | `22/tcp open ssh` |
+| 3. Wordlist | 10 fake passwords in `passwords.txt` | — |
+| 4. Brute-force | `hydra -l socadmin -P passwords.txt -t 4 ssh://172.16.207.10` | 11 failed SSH logins, `0 valid password found` |
+| 5. Detection | Wazuh correlation on `/var/log/auth.log` | Rule **5763** "sshd: brute force", level 10, **T1110** |
+| 6. Response | `firewall-drop` Active Response | Kali's IP `172.16.207.130` banned for 180s |
+
+Active Response block added to `/var/ossec/etc/ossec.conf`:
+
+```xml
+<active-response>
+  <command>firewall-drop</command>
+  <location>local</location>
+  <rules_id>5763</rules_id>
+  <timeout>180</timeout>
+</active-response>
+```
+
+Proof in `/var/ossec/logs/active-responses.log`:
+
+```
+active-response/bin/firewall-drop: {"command":"add", ...
+  "srcip":"172.16.207.130",
+  "rule":{"id":"5763","level":10,
+          "description":"sshd: brute force trying to get access to the system",
+          "mitre":{"id":["T1110"],"technique":["Brute Force"]}}}
+```
+
+This closes the loop: **detect → respond**. The lab now blocks an attacker automatically, not just alerts on it.
+
+> Note during setup: the SSH brute-force fires Wazuh rule **5763** (not the older `5712`), so the Active
+> Response must reference `5763`. Confirmed by reading the alert in `alerts.log` before wiring the response.
 
 ---
 
@@ -112,14 +151,4 @@ done < passwords.txt
 | Wazuh rejected the new password | Allowed symbols are limited to `.*+?-` | Compliant password |
 
 **Main lesson:** service, firewall and listener are three separate layers. A port can be allowed in the
-firewall with the service running, and still nothing is actually listening.
-
----
-
-## Roadmap
-
-- [ ] Account lockout (Event ID 4740)
-- [ ] Custom Wazuh rule for RDP brute-force
-- [ ] Active Response: block the attacker IP automatically
-- [ ] SSH brute-force against the Ubuntu server
-- [ ] Python script to enrich alerts (IP reputation via AbuseIPDB)
+firewall with the service running, and still nothing is actually listening
