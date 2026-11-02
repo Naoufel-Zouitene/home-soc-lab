@@ -1,0 +1,125 @@
+# Home SOC Lab – Wazuh, Sysmon & Attack Detection
+
+A small Security Operations Center built on a laptop to practice the SOC analyst workflow:
+a monitored Windows endpoint, a Wazuh SIEM collecting its logs, and a Kali machine attacking it.
+
+**First scenario:** an RDP brute-force from Kali, detected by Wazuh as a level 10 correlation alert
+(MITRE ATT&CK **T1110 – Brute Force**). The focus is the defender side: see the alert, understand it, trace it back.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph NAT["VMware Fusion · NAT 172.16.207.0/24"]
+        K["Kali Linux<br/>172.16.207.130<br/>attacker"]
+        W["WIN11-SOC<br/>172.16.207.128<br/>Wazuh agent + Sysmon"]
+        S["Ubuntu Server 24.04<br/>172.16.207.10<br/>Wazuh 4.14 all-in-one"]
+    end
+    A["Host Mac<br/>analyst workstation"]
+    K -- "RDP 3389" --> W
+    W -- "logs (1514/tcp)" --> S
+    S -- "HTTPS dashboard" --> A
+```
+
+| VM | OS | Role | IP |
+| --- | --- | --- | --- |
+| wazuh-server | Ubuntu Server 24.04 ARM | SIEM (indexer, manager, dashboard) | 172.16.207.10 (static) |
+| WIN11-SOC | Windows 11 ARM | Monitored endpoint | 172.16.207.128 |
+| kali-attacker | Kali Linux 2026.2 ARM | Attacker | 172.16.207.130 |
+
+Host: MacBook Air M5 (16 GB), VMware Fusion.
+
+---
+
+## Setup
+
+1. **Wazuh 4.14.8** installed all-in-one on Ubuntu:
+   ```bash
+   curl -sO https://packages.wazuh.com/4.14/wazuh-install.sh
+   sudo bash wazuh-install.sh -a
+   ```
+2. **Static IP** for the server with netplan (cloud-init network config disabled so it is not overwritten):
+   ```bash
+   echo "network: {config: disabled}" | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+   sudo netplan apply
+   ```
+3. **Admin password** changed with `wazuh-passwords-tool.sh`, Filebeat checked with `filebeat test output`.
+4. **Wazuh agent** on Windows (PowerShell as admin):
+   ```powershell
+   Invoke-WebRequest -Uri https://packages.wazuh.com/4.x/windows/wazuh-agent-4.14.8-1.msi -OutFile $env:tmp\wazuh-agent.msi
+   msiexec.exe /i $env:tmp\wazuh-agent.msi /q WAZUH_MANAGER='172.16.207.10' WAZUH_AGENT_NAME='WIN11-SOC'
+   NET START Wazuh
+   ```
+5. **Sysmon** with the [SwiftOnSecurity config](https://github.com/SwiftOnSecurity/sysmon-config) (`Sysmon64a.exe` for ARM64),
+   and the Sysmon channel added to the agent's `ossec.conf`:
+   ```xml
+   <localfile>
+     <location>Microsoft-Windows-Sysmon/Operational</location>
+     <log_format>eventchannel</log_format>
+   </localfile>
+   ```
+6. **Snapshots** taken at every stable step, so any mistake can be rolled back in seconds.
+
+![Wazuh dashboard with active agent](screenshots/01-agent-active.png)
+
+---
+
+## Scenario 1 – RDP brute-force detection
+
+| Step | Action | Result |
+| --- | --- | --- |
+| 1. Recon | `nmap 172.16.207.128` from Kali | All ports `filtered` (Windows firewall) |
+| 2. Prepare target | Enable RDP (`fDenyTSConnections = 0`), enable firewall rules, reboot | `3389/tcp open` |
+| 3. Single attempt | `hydra -l analyst -p <wrong> rdp://172.16.207.128` | 1 × Event ID 4625 → Wazuh rule 60122 (level 5) |
+| 4. Brute-force | Bash loop with `xfreerdp +auth-only` over a 10-password wordlist | 10 × Event ID 4625 |
+| 5. Detection | Wazuh correlation | Rule **60204 "Multiple Windows Logon Failures"**, level 10, **T1110** |
+
+Brute-force loop used (hydra's RDP module was unstable on this setup):
+
+```bash
+while read pw; do
+  xfreerdp /v:172.16.207.128 /u:analyst /p:"$pw" +auth-only /cert:ignore
+done < passwords.txt
+```
+
+### What the alert shows
+
+| Field | Value |
+| --- | --- |
+| Windows event | 4625 (failed logon) |
+| Sub-status | `0xC000006A` (wrong password, existing account) |
+| Target account | `analyst` |
+| Source IP | `172.16.207.130` (Kali) |
+| Atomic rule | 60122, level 5 – one failure is noise |
+| Correlation rule | 60204, level 10 – the pattern is the signal |
+| MITRE ATT&CK | T1110 Brute Force |
+
+![Correlation alert 60204 in Threat Hunting](screenshots/02-alert-60204.png)
+
+![nmap before and after enabling RDP](screenshots/03-nmap.png)
+
+---
+
+## Troubleshooting notes
+
+| Problem | Cause | Fix |
+| --- | --- | --- |
+| Port 3389 still `filtered` after enabling RDP | Service "Running" but no listener (`Get-NetTCPConnection`) | Full reboot of the Windows VM |
+| Hydra RDP module fails (`freerdp: connection failed`) | Unstable module on this setup | Loop with `xfreerdp +auth-only` |
+| Agent kept the old manager IP | `ossec.conf` is read only at start | Edit `ossec.conf`, `Restart-Service WazuhSvc` |
+| Wazuh rejected the new password | Allowed symbols are limited to `.*+?-` | Compliant password |
+
+**Main lesson:** service, firewall and listener are three separate layers. A port can be allowed in the
+firewall with the service running, and still nothing is actually listening.
+
+---
+
+## Roadmap
+
+- [ ] Account lockout (Event ID 4740)
+- [ ] Custom Wazuh rule for RDP brute-force
+- [ ] Active Response: block the attacker IP automatically
+- [ ] SSH brute-force against the Ubuntu server
+- [ ] Python script to enrich alerts (IP reputation via AbuseIPDB)
