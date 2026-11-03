@@ -138,6 +138,24 @@ This closes the loop: **detect → respond**. The lab now blocks an attacker aut
 > Note during setup: the SSH brute-force fires Wazuh rule **5763** (not the older `5712`), so the Active
 > Response must reference `5763`. Confirmed by reading the alert in `alerts.log` before wiring the response.
 
+### Walkthrough (screenshots)
+
+**1. Recon — the attacker finds SSH open (Nmap)**
+
+![Nmap scan showing 22/tcp open ssh](01-nmap.png)
+
+**2. Attack — SSH brute-force from Kali (Hydra)**
+
+![Hydra SSH brute-force, 0 valid password found](02-hydra.png)
+
+**3. Detection — Wazuh raises the brute-force alert (rule 5763)**
+
+![Wazuh alert rule 5763 sshd brute force](03-alert.png)
+
+**4. Response — Active Response bans the attacker's IP (firewall-drop)**
+
+![firewall-drop banning 172.16.207.130 on rule 5763 / T1110](04-fw.png)
+
 ---
 
 ## Troubleshooting notes
@@ -154,4 +172,10 @@ firewall with the service running, and still nothing is actually listening.
 
 ---
 
+## Roadmap
 
+- [x] SSH brute-force against the Ubuntu server (Scenario 2)
+- [x] Active Response: block the attacker IP automatically (Scenario 2)
+- [ ] Account lockout (Event ID 4740)
+- [ ] Custom Wazuh rule for RDP brute-force
+- [ ] Python script to enrich alerts (IP reputation via AbuseIPDB)
